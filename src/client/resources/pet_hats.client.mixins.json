@@ -1,0 +1,11 @@
+{
+	"required": true,
+	"package": "com.pethats.client.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"LivingEntityRendererMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

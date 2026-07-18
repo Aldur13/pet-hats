@@ -1,0 +1,16 @@
+{
+	"type": "minecraft:crafting_shaped",
+	"category": "equipment",
+	"key": {
+		"X": "minecraft:gold_ingot",
+		"Y": "pet_hats:iron_helm"
+	},
+	"pattern": [
+		"XXX",
+		"XYX",
+		"XXX"
+	],
+	"result": {
+		"id": "pet_hats:golden_crown"
+	}
+}

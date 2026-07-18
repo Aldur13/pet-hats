@@ -1,0 +1,36 @@
+{
+	"schemaVersion": 1,
+	"id": "pet_hats",
+	"version": "${version}",
+	"name": "Pet Hats",
+	"description": "Craft or find hats for your tamed animals. Each hat buffs health and attack damage; the legendary Ender Crown grants a pet inventory with a weapon slot.",
+	"authors": [
+		"Pet Hats contributors"
+	],
+	"contact": {
+		"sources": "https://github.com/aldur13/pet-hats"
+	},
+	"license": "MIT",
+	"icon": "assets/pet_hats/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.pethats.PetHats"
+		],
+		"client": [
+			"com.pethats.client.PetHatsClient"
+		]
+	},
+	"mixins": [
+		{
+			"config": "pet_hats.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}

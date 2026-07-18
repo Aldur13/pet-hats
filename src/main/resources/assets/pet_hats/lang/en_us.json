@@ -1,0 +1,24 @@
+{
+	"itemGroup.pet_hats.pet_hats": "Pet Hats",
+
+	"item.pet_hats.leather_cap": "Leather Cap",
+	"item.pet_hats.iron_helm": "Iron Helm",
+	"item.pet_hats.golden_crown": "Golden Crown",
+	"item.pet_hats.diamond_circlet": "Diamond Circlet",
+	"item.pet_hats.netherite_warhelm": "Netherite Warhelm",
+	"item.pet_hats.captains_hat": "Captain's Hat",
+	"item.pet_hats.piglin_war_mask": "Piglin War Mask",
+	"item.pet_hats.ender_crown": "Ender Crown",
+
+	"item.pet_hats.leather_cap.tooltip": "+2 Health, +1 Attack Damage",
+	"item.pet_hats.iron_helm.tooltip": "+6 Health, +2 Attack Damage",
+	"item.pet_hats.golden_crown.tooltip": "+10 Health, +4 Attack Damage",
+	"item.pet_hats.diamond_circlet.tooltip": "+16 Health, +6 Attack Damage",
+	"item.pet_hats.netherite_warhelm.tooltip": "+24 Health, +10 Attack Damage",
+	"item.pet_hats.captains_hat.tooltip": "+8 Health, +3 Attack Damage, +20% Speed",
+	"item.pet_hats.piglin_war_mask.tooltip": "+20 Health, +8 Attack Damage, +4 Armor",
+	"item.pet_hats.ender_crown.tooltip": "5x Health, 5x Attack Damage, unlocks a pet inventory",
+
+	"pet_hats.tooltip.equip": "Right-click a tamed animal to equip",
+	"pet_hats.tooltip.remove": "Sneak + right-click a hatted pet with an empty hand to remove its hat"
+}

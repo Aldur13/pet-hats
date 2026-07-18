@@ -1,0 +1,9 @@
+{
+	"type": "minecraft:smithing_transform",
+	"template": "minecraft:netherite_upgrade_smithing_template",
+	"base": "pet_hats:diamond_circlet",
+	"addition": "#minecraft:netherite_tool_materials",
+	"result": {
+		"id": "pet_hats:netherite_warhelm"
+	}
+}
