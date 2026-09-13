@@ -1,0 +1,81 @@
+# dronegoto safety configuration
+#
+# Every limit the aircraft obeys is in this file. Values here are conservative
+# defaults, not recommendations for your airframe - a heavier drone drains
+# faster, a smaller one is blown further by the same wind.
+#
+# Unknown keys are rejected at load time rather than ignored, so a typo fails
+# loudly instead of silently leaving a default in force.
+
+battery:
+  low_pct: 0.40              # <- return home at 40%
+  critical_pct: 0.20         # land where it is
+  emergency_pct: 0.10        # land immediately, no negotiation
+  arm_minimum_pct: 0.50      # refuse to take off below this
+  reserve_pct: 0.15          # charge that must remain after getting home
+  cruise_drain_pct_per_km: 7.0   # return-energy estimator; ~= hover_drain at cruise speed
+  hover_drain_pct_per_min: 5.0
+  adaptive_estimation: true  # refine the estimates from observed drain in flight
+
+geofence:
+  enabled: true
+  max_radius_m: 5000.0       # hard boundary from home
+  soft_margin_m: 500.0       # start returning this far inside the hard boundary
+  lookahead_s: 10.0          # project current velocity forward; turn back early
+
+altitude:
+  max_altitude_m: 120.0      # ceiling (120 m / ~400 ft is the common legal limit)
+  min_altitude_m: 10.0
+  rth_altitude_m: 80.0       # climb to this before returning, to clear obstacles
+  terrain_clearance_m: 40.0  # minimum height above ground along the route
+
+impact:
+  enabled: true
+  accel_threshold_g: 3.0     # <- collision detection; level flight reads 1.0g
+  accel_instant_g: 6.0       # a single peak this high is a collision, not noise
+  accel_duration_s: 0.5      # must span >= 2 control ticks or it can never fire
+  freefall_threshold_g: 0.3  # sustained near-zero g means it is falling
+  freefall_duration_s: 0.6
+  max_attitude_deg: 60.0     # roll/pitch excursion implying loss of control
+
+gps:
+  min_satellites: 8
+  max_hdop: 2.5
+  loss_timeout_s: 3.0
+  degraded_timeout_s: 5.0
+
+link:
+  loss_timeout_s: 5.0
+  loss_action: return        # continue | hold | return | land
+  telemetry_stale_s: 2.0     # no data for this long is itself an alarm
+  blind_timeout_s: 60.0      # after this, stop supervising; the aircraft's own
+                             # onboard failsafes (written at preflight) take over
+
+timing:
+  max_flight_time_s: 900.0   # 15 min hard cap
+  max_hover_time_s: 300.0    # 5 min hovering at the destination
+  no_progress_timeout_s: 30.0
+  no_progress_min_closure_m: 5.0
+  tick_interval_s: 0.2
+
+flight:
+  cruise_speed_ms: 12.0
+  max_speed_ms: 15.0
+  max_wind_ms: 10.0
+  max_uncommanded_descent_ms: 2.0
+  arrival_radius_m: 3.0
+
+terrain:
+  enabled: true
+  provider_url: "https://api.opentopodata.org/v1/srtm30m"
+  samples: 25
+  timeout_s: 10.0
+  cache_path: ".cache/elevation.json"
+  required: false            # true = refuse to fly if elevation data is unavailable
+
+behaviour:
+  latch_failsafes: true      # once a return is triggered it does not un-trigger
+  allow_terminate: false     # motor cutoff; only enable if you understand it
+  require_preflight_pass: true
+  upload_autopilot_fence: true   # defence in depth: fence lives on the aircraft too
+  write_autopilot_params: true   # ...and so do the battery/RTL failsafes

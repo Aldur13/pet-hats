@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dronegoto"
+version = "0.1.0"
+description = "Safety-first autonomous go-to-coordinate-and-hover flight supervisor"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+mavsdk = ["mavsdk>=1.4"]
+dev = ["pytest>=7.4", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+dronegoto = "dronegoto.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dronegoto*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
