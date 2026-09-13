@@ -6,7 +6,7 @@ import argparse
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .backends.base import BackendError, DroneBackend
@@ -53,6 +53,16 @@ def _resolve_terrain(
         return None
     source = FlatTerrain() if offline else None
     return profile_route(home, target, config.terrain, source=source)
+
+
+class _SimGround:
+    """Elevation source backed by the simulator's true terrain."""
+
+    def __init__(self, backend: SimBackend) -> None:
+        self.backend = backend
+
+    def lookup(self, points):
+        return [self.backend.ground_elevation(p) for p in points]
 
 
 def _default_sim_home(target: GeoPoint) -> GeoPoint:
@@ -181,8 +191,18 @@ async def _fly(args: argparse.Namespace) -> int:
         print("refusing to fly a NO-GO plan.", file=sys.stderr)
         return EXIT_REFUSED
 
+    # The planner flew on the survey (flat, when --offline). The world is what it
+    # is: in the simulator that is the backend's own ground model, so the
+    # in-flight terrain rule sees the ground the aircraft is actually over.
+    # Without this a terrain-rise scenario is a silent no-op.
+    flight_terrain = terrain
+    if isinstance(backend, SimBackend) and config.terrain.enabled:
+        flight_terrain = profile_route(
+            home, target, config.terrain, source=_SimGround(backend)
+        )
+
     log_path = Path(args.log) if args.log else Path("flights") / (
-        f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.jsonl"
+        f"{datetime.now(UTC).astimezone().strftime('%Y%m%d-%H%M%S')}.jsonl"
     )
     dashboard = Dashboard(enabled=not args.quiet)
 
@@ -198,7 +218,7 @@ async def _fly(args: argparse.Namespace) -> int:
             print("preflight failed - not arming.", file=sys.stderr)
             return EXIT_REFUSED
 
-        result = await controller.run(plan, terrain=terrain)
+        result = await controller.run(plan, terrain=flight_terrain, report=report)
         dashboard.close()
         await backend.close()
 

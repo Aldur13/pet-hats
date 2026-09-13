@@ -83,7 +83,7 @@ class MissionPlan:
 
 
 def _duration(seconds: float) -> str:
-    minutes, secs = divmod(int(round(seconds)), 60)
+    minutes, secs = divmod(round(seconds), 60)
     return f"{minutes}m {secs:02d}s"
 
 
@@ -102,6 +102,15 @@ def plan_mission(
 
     hover_s = config.timing.max_hover_time_s if hover_s is None else hover_s
     distance_m = haversine_m(home, target)
+
+    if hover_s < 0:
+        blockers.append("hover time cannot be negative")
+    elif hover_s > config.timing.max_hover_time_s:
+        blockers.append(
+            f"requested hover of {_duration(hover_s)} exceeds the "
+            f"{_duration(config.timing.max_hover_time_s)} limit; the aircraft would "
+            f"be sent home by the hover timeout before the plan finished"
+        )
 
     # --- geofence -------------------------------------------------------
     if config.geofence.enabled:

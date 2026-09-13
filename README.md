@@ -99,7 +99,7 @@ dronegoto fly "51.5074,-0.1278" --config my-airframe.yaml
 ## Testing
 
 ```bash
-pytest                      # 160 tests, no hardware required
+pytest                      # 294 tests, no hardware required
 ```
 
 - Every rule tested for firing **and** for staying quiet on healthy telemetry.

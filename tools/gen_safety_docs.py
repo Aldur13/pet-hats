@@ -13,8 +13,8 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from dronegoto.config import SafetyConfig  # noqa: E402
-from dronegoto.safety import RULES, Severity  # noqa: E402
+from dronegoto.config import SafetyConfig
+from dronegoto.safety import RULES, Severity
 
 
 def generate() -> str:

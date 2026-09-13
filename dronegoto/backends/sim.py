@@ -11,9 +11,9 @@ suite can fly hundreds of them.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Callable
 
 from ..config import SafetyConfig
 from ..geo import GeoPoint, bearing_deg, haversine_m, project

@@ -48,8 +48,11 @@ PX4_PARAMS = {
     "fence_action": ("GF_ACTION", "int", lambda cfg: 2),
 }
 
+# Deliberately no BATT_LOW_VOLT / BATT_LOW_MAH entry: our thresholds are
+# percentages and ArduPilot's are volts or mAh, which depend on the pack. Writing
+# a guess - and in particular writing 0, which *disables* the voltage failsafe -
+# would be worse than leaving the pilot's own calibration in place.
 ARDUPILOT_PARAMS = {
-    "battery_low": ("BATT_LOW_VOLT", "float", lambda cfg: 0.0),
     "rtl_altitude": ("RTL_ALT", "float", lambda cfg: cfg.altitude.rth_altitude_m * 100),
     "fence_radius": ("FENCE_RADIUS", "float", lambda cfg: cfg.geofence.max_radius_m),
     "fence_altitude": ("FENCE_ALT_MAX", "float", lambda cfg: cfg.altitude.max_altitude_m),
@@ -147,6 +150,15 @@ class MavsdkBackend(DroneBackend):
     def now(self) -> float:
         return time.monotonic()
 
+    async def step(self, dt: float) -> None:
+        """Pace the control loop against wall time.
+
+        Nothing else in the loop necessarily yields, so without this sleep the
+        supervisor would spin flat out, starve the telemetry subscription tasks
+        on the same event loop, and see a frozen frame forever.
+        """
+        await asyncio.sleep(dt)
+
     # ------------------------------------------------------------------
     async def connect(self) -> None:
         try:
@@ -204,7 +216,7 @@ class MavsdkBackend(DroneBackend):
                 self._latest_at[name] = self.now()
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - transport level
+        except Exception as exc:  # noqa: BLE001 - transport boundary; any failure ends the stream
             # A dead subscription must not be silent: telemetry simply stops
             # updating, and the staleness rule is what notices.
             log.warning("telemetry stream %r ended: %s", name, exc)
@@ -228,10 +240,13 @@ class MavsdkBackend(DroneBackend):
         if home is not None and self._home is None:
             self._home = GeoPoint(home.latitude_deg, home.longitude_deg)
 
-        # Timestamp is the oldest constituent reading, not "now": a frame is only
-        # as fresh as its stalest part, and claiming otherwise would hide a dead
-        # subscription from the staleness rule.
-        timestamp = min(self._latest_at.values()) if self._latest_at else self.now()
+        # Timestamp is the oldest of the *continuous* readings, not "now": a frame
+        # is only as fresh as its stalest part, and claiming otherwise would hide a
+        # dead subscription from the staleness rule. Streams that only publish on
+        # change (home, armed, in_air) are excluded, or a perfectly healthy
+        # aircraft would look stale a few seconds after takeoff.
+        fresh = [self._latest_at[name] for name in FAST_STREAMS if name in self._latest_at]
+        timestamp = min(fresh) if fresh else self.now()
 
         velocity_ned = None
         accel_g = None
@@ -259,7 +274,7 @@ class MavsdkBackend(DroneBackend):
             battery_voltage_v=battery.voltage_v if battery is not None else None,
             satellites=gps.num_satellites if gps is not None else None,
             hdop=None,
-            has_fix=(gps.fix_type >= 3) if gps is not None else None,
+            has_fix=_has_3d_fix(gps.fix_type) if gps is not None else None,
             accel_magnitude_g=accel_g,
             attitude_deg=attitude_deg,
             wind_speed_ms=None,
@@ -269,6 +284,10 @@ class MavsdkBackend(DroneBackend):
         )
 
     async def home_position(self) -> GeoPoint | None:
+        if self._home is None:
+            home = self._latest.get("home")
+            if home is not None:
+                self._home = GeoPoint(home.latitude_deg, home.longitude_deg)
         return self._home
 
     # ------------------------------------------------------------------
@@ -331,14 +350,14 @@ class MavsdkBackend(DroneBackend):
         knows each parameter's units and whether it is an int or a float.
         """
         failures = []
-        for key, (name, kind, value_of) in self.param_map.items():
+        for name, kind, value_of in self.param_map.values():
             value = value_of(self.config)
             try:
                 if kind == "int":
                     await self._drone.param.set_param_int(name, int(value))
                 else:
                     await self._drone.param.set_param_float(name, float(value))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - collect every failure, then raise once
                 failures.append(f"{name}: {exc}")
         if failures:
             raise BackendError(
@@ -351,6 +370,24 @@ class MavsdkBackend(DroneBackend):
             await coro
         except Exception as exc:
             raise BackendError(f"{what} failed: {exc}") from exc
+
+
+# Streams whose age says something about link health. See read_telemetry().
+FAST_STREAMS = ("position", "battery", "gps_info", "attitude", "velocity")
+
+# Fix types that give a usable 3D position, by name so this survives MAVSDK
+# reordering the enum. Its FixType is a plain Enum: `fix_type >= 3` raises.
+_3D_FIX_NAMES = frozenset({"FIX_3D", "FIX_DGPS", "RTK_FLOAT", "RTK_FIXED"})
+
+
+def _has_3d_fix(fix_type: Any) -> bool:
+    name = getattr(fix_type, "name", None)
+    if name is not None:
+        return name in _3D_FIX_NAMES
+    try:
+        return int(fix_type) >= 3
+    except (TypeError, ValueError):
+        return False
 
 
 def _clamp01(percent: float | None) -> float | None:

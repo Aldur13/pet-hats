@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
-from typing import Deque, Iterable
 
 from .geo import GeoPoint, haversine_m
 
@@ -79,7 +79,7 @@ class Telemetry:
             return None
         return haversine_m(self.position, point)
 
-    def with_(self, **changes: object) -> "Telemetry":
+    def with_(self, **changes: object) -> Telemetry:
         """Return a copy with fields replaced - convenient in tests and the simulator."""
         return replace(self, **changes)  # type: ignore[arg-type]
 
@@ -93,7 +93,7 @@ class TelemetryBuffer:
     """
 
     window_s: float = 60.0
-    _frames: Deque[Telemetry] = field(default_factory=deque)
+    _frames: deque[Telemetry] = field(default_factory=deque)
 
     def append(self, frame: Telemetry) -> None:
         self._frames.append(frame)
@@ -106,7 +106,7 @@ class TelemetryBuffer:
     def __len__(self) -> int:
         return len(self._frames)
 
-    def __iter__(self) -> Iterable[Telemetry]:
+    def __iter__(self) -> Iterator[Telemetry]:
         return iter(self._frames)
 
     @property

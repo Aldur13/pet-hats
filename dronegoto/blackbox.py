@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Self
 
 from .safety import SafetyVerdict, Severity
 from .telemetry import Telemetry
@@ -44,7 +45,7 @@ class BlackBox:
         self._file = self.path.open("w", encoding="utf-8")
         self._flush_every = flush_every
         self._since_flush = 0
-        self.write("session", started_utc=datetime.now(timezone.utc).isoformat())
+        self.write("session", started_utc=datetime.now(UTC).isoformat())
 
     def write(self, kind: str, **payload: Any) -> None:
         record = {"kind": kind, "wall": round(time.time(), 3), **_encode(payload)}
@@ -105,7 +106,7 @@ class BlackBox:
             self.flush()
             self._file.close()
 
-    def __enter__(self) -> "BlackBox":
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc: object) -> None:

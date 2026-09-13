@@ -149,7 +149,7 @@ def test_replay_summarises_a_flight(tmp_path, capsys):
 
 
 def test_replay_of_a_missing_file(capsys):
-    code, out = run(["replay", "/nonexistent/flight.jsonl"], capsys)
+    code, _ = run(["replay", "/nonexistent/flight.jsonl"], capsys)
     assert code == EXIT_USAGE
 
 
@@ -163,3 +163,22 @@ def test_real_flight_is_refused_without_a_human_or_explicit_yes(monkeypatch, cap
     assert code == EXIT_REFUSED
     assert "without --yes" in out.err
     assert "nothing was commanded" in out.err
+
+
+def test_terrain_rise_scenario_actually_climbs(tmp_path, capsys):
+    """The scenario used to be a silent no-op from the CLI: with --offline the
+    controller only saw the flat survey, never the simulator's rising ground."""
+    log = tmp_path / "terrain.jsonl"
+    code, out = run(
+        ["sim-scenario", "terrain-rise", "51.5074,-0.1278", "--offline", "--quiet",
+         "--hover", "20", "--log", str(log)],
+        capsys,
+    )
+    assert code == EXIT_OK
+    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    climbs = [r for r in records if r["kind"] == "command" and r["command"] == "climb"]
+    assert climbs, "terrain rise produced no climb command"
+    assert "terrain_clearance" in out.out or any(
+        r["kind"] == "verdict" and any(t["rule"] == "terrain_clearance" for t in r["triggers"])
+        for r in records
+    )

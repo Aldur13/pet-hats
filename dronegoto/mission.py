@@ -9,9 +9,9 @@ be accidentally bypassed by a new flight phase.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Awaitable, Callable
 
 from .backends.base import BackendError, DroneBackend
 from .blackbox import BlackBox
@@ -148,6 +148,7 @@ class MissionController:
         self._interrupted = False
         self._was_airborne = False
         self._last_position: GeoPoint | None = None
+        self._terrain_climb_target_m: float | None = None
 
     # ------------------------------------------------------------------
     # Preflight
@@ -168,10 +169,13 @@ class MissionController:
         has_fix = telemetry.has_fix is True
         satellites = telemetry.satellites
         enough_sats = satellites is not None and satellites >= self.config.gps.min_satellites
-        hdop_ok = telemetry.hdop is not None and telemetry.hdop <= self.config.gps.max_hdop
+        # HDOP is checked when reported. Some backends (MAVSDK) never report it;
+        # a 3D fix with enough satellites is still a valid basis for arming.
+        hdop_ok = telemetry.hdop is None or telemetry.hdop <= self.config.gps.max_hdop
+        hdop_text = "n/a" if telemetry.hdop is None else f"{telemetry.hdop}"
         checks.append(
             Check("gps fix", has_fix and enough_sats and hdop_ok,
-                  f"{satellites} sats, hdop {telemetry.hdop}")
+                  f"{satellites} sats, hdop {hdop_text}")
         )
 
         battery = telemetry.battery_remaining
@@ -253,9 +257,18 @@ class MissionController:
     # ------------------------------------------------------------------
     # Flight
     # ------------------------------------------------------------------
-    async def run(self, plan: MissionPlan, terrain: TerrainProfile | None = None) -> MissionResult:
+    async def run(
+        self,
+        plan: MissionPlan,
+        terrain: TerrainProfile | None = None,
+        report: PreflightReport | None = None,
+    ) -> MissionResult:
+        """Fly the plan. Pass `report` to reuse a preflight already run for this
+        plan - otherwise the fence upload and parameter writes happen twice."""
         terrain = terrain if terrain is not None else plan.terrain
-        report = await self.preflight(plan)
+        self._reset()
+        if report is None:
+            report = await self.preflight(plan)
         if not report.passed and self.config.behaviour.require_preflight_pass:
             return MissionResult(
                 outcome=MissionOutcome.PREFLIGHT_FAILED,
@@ -324,7 +337,7 @@ class MissionController:
                     await result
 
             await self._dispatch(verdict, plan)
-            if verdict.severity < Severity.RETURN:
+            if verdict.severity < Severity.HOLD:
                 await self._advance(telemetry, plan, now)
 
             if self._is_down(telemetry):
@@ -350,12 +363,31 @@ class MissionController:
 
         return self._result(self._outcome(), self._reason(), telemetry, report)
 
+    def _reset(self) -> None:
+        """Clear everything a previous mission left behind."""
+        self.engine.reset()
+        self.history.clear()
+        self._held = False
+        self._reached_target = False
+        self._was_airborne = False
+        self._interrupted = False
+        self._last_position = None
+        self._terrain_climb_target_m = None
+
     def _update_state(
         self, telemetry: Telemetry, terrain: TerrainProfile | None, now: float
     ) -> None:
         state = self.state
         if telemetry.in_air:
             self._was_airborne = True
+        if (
+            state.home_elevation_m is None
+            and telemetry.altitude_amsl_m is not None
+            and telemetry.altitude_rel_m is not None
+        ):
+            # Taken from the aircraft rather than the elevation service, so the
+            # terrain rule converts against what the autopilot actually believes.
+            state.home_elevation_m = telemetry.altitude_amsl_m - telemetry.altitude_rel_m
         if telemetry.position is not None:
             if self._last_position is not None:
                 state.distance_travelled_m += haversine_m(self._last_position, telemetry.position)
@@ -363,7 +395,7 @@ class MissionController:
             if terrain is not None:
                 state.ground_elevation_here_m = terrain.elevation_at(telemetry.position)
                 state.max_ground_elevation_m = terrain.max_elevation_m
-        update_progress(state, telemetry, now)
+        update_progress(state, telemetry, now, self.config.timing.no_progress_min_closure_m)
 
     async def _dispatch(self, verdict: SafetyVerdict, plan: MissionPlan) -> None:
         """Translate a verdict into a command, without re-issuing it every tick."""
@@ -398,15 +430,63 @@ class MissionController:
             return
 
         if severity >= Severity.HOLD:
+            if await self._climb_clear_of_terrain(verdict, plan):
+                return
+            if self._terrain_climb_in_progress(verdict):
+                # The climb *is* the response. A hold now would freeze the
+                # altitude on a real autopilot and the climb would never finish.
+                return
             if not self._held:
                 self._held = True
                 await self.backend.hold()
                 self._command("hold", verdict.primary.rule if verdict.primary else "")
             return
 
+        self._terrain_climb_target_m = None
         if self._held:
             self._held = False
             await self._resume(plan)
+
+    async def _climb_clear_of_terrain(self, verdict: SafetyVerdict, plan: MissionPlan) -> bool:
+        """Answer a terrain-clearance HOLD by raising the cruise altitude.
+
+        Holding in place over rising ground fixes nothing; the aircraft needs to
+        be higher. Re-command the same target at the altitude the rule asked for,
+        clamped to the ceiling (the rule escalates to RETURN itself when the
+        ceiling makes that impossible).
+        """
+        state = self.state
+        if state.phase is not MissionPhase.CRUISE or state.target is None:
+            return False
+        trigger = next((t for t in verdict.triggers if t.rule == "terrain_clearance"), None)
+        if trigger is None:
+            return False
+        needed_rel = trigger.detail.get("needed_rel_m")
+        if needed_rel is None:
+            return False
+        altitude_cfg = self.config.altitude
+        needed_rel = float(needed_rel)
+        # Clear the highest ground on the rest of the route in one climb rather
+        # than stair-stepping up a slope one tolerance band at a time.
+        if state.max_ground_elevation_m is not None and state.home_elevation_m is not None:
+            needed_rel = max(
+                needed_rel,
+                state.max_ground_elevation_m + altitude_cfg.terrain_clearance_m - state.home_elevation_m,
+            )
+        target_altitude = min(needed_rel + altitude_cfg.clearance_tolerance_m, altitude_cfg.max_altitude_m)
+        current = state.cruise_altitude_m or plan.cruise_altitude_rel_m
+        if target_altitude <= current + 0.5:
+            return False
+        state.cruise_altitude_m = target_altitude
+        self._terrain_climb_target_m = target_altitude
+        await self.backend.goto(state.target, target_altitude, self.config.flight.cruise_speed_ms)
+        self._command("climb", f"terrain: {current:.0f}m -> {target_altitude:.0f}m")
+        return True
+
+    def _terrain_climb_in_progress(self, verdict: SafetyVerdict) -> bool:
+        if self._terrain_climb_target_m is None:
+            return False
+        return all(t.rule == "terrain_clearance" for t in verdict.triggers)
 
     async def _resume(self, plan: MissionPlan) -> None:
         """Pick the mission back up after a transient HOLD has cleared."""

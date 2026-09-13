@@ -6,7 +6,6 @@ rule is: parse unambiguously or refuse, never guess.
 
 from __future__ import annotations
 
-
 import pytest
 
 from dronegoto.geo import (

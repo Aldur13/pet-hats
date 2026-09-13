@@ -18,9 +18,9 @@ Two behaviours are borrowed from production autopilots:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
-from typing import Callable, Iterable
 
 from .config import SafetyConfig
 from .geo import GeoPoint, haversine_m, project
@@ -110,6 +110,9 @@ class MissionState:
     started_at: float | None = None
     hover_started_at: float | None = None
     cruise_altitude_m: float | None = None
+    # Elevation of the launch point, AMSL. Ceiling and cruise altitude are
+    # relative to it, terrain is absolute; this is what converts between them.
+    home_elevation_m: float | None = None
     max_ground_elevation_m: float | None = None
     ground_elevation_here_m: float | None = None
     battery_at_start: float | None = None
@@ -475,14 +478,26 @@ def rule_terrain_clearance(ctx: SafetyContext) -> Trigger | None:
         needed_amsl = ground + cfg.terrain_clearance_m
         severity = Severity.HOLD
         note = "climbing"
-        if ctx.state.home is not None and needed_amsl - (ctx.state.max_ground_elevation_m or ground) > cfg.max_altitude_m:
-            severity = Severity.RETURN
-            note = "cannot climb clear within the ceiling"
+        needed_rel = None
+        if ctx.state.home_elevation_m is not None:
+            # The ceiling is measured from the launch point, so the question is
+            # whether the required AMSL altitude is reachable relative to it.
+            needed_rel = needed_amsl - ctx.state.home_elevation_m
+            if needed_rel > cfg.max_altitude_m:
+                severity = Severity.RETURN
+                note = (f"clearing it needs {needed_rel:.0f} m above home, over the "
+                        f"{cfg.max_altitude_m:.0f} m ceiling - returning")
         return Trigger(
             "terrain_clearance",
             severity,
             f"only {clearance:.0f} m above ground (minimum {cfg.terrain_clearance_m:.0f} m) - {note}",
-            {"clearance_m": clearance, "minimum_m": cfg.terrain_clearance_m, "ground_m": ground},
+            {
+                "clearance_m": clearance,
+                "minimum_m": cfg.terrain_clearance_m,
+                "ground_m": ground,
+                "needed_amsl_m": needed_amsl,
+                "needed_rel_m": needed_rel,
+            },
         )
     return None
 
@@ -732,8 +747,7 @@ class SafetyEngine:
         latched = False
         if self.config.behaviour.latch_failsafes:
             if severity >= Severity.RETURN:
-                if severity > self._latched:
-                    self._latched = severity
+                self._latched = max(self._latched, severity)
                 self._latched_triggers = _merge_triggers(self._latched_triggers, triggers)
             if self._latched > severity:
                 severity = self._latched
@@ -786,19 +800,21 @@ def _merge_triggers(existing: list[Trigger], new: list[Trigger]) -> list[Trigger
     return list(merged.values())
 
 
-def update_progress(state: MissionState, telemetry: Telemetry, now: float) -> None:
+def update_progress(
+    state: MissionState, telemetry: Telemetry, now: float, min_closure_m: float = 1.0
+) -> None:
     """Maintain the closure tracking that `rule_no_progress` reads.
 
-    Kept beside the rules because the two must agree on what "progress" means.
+    Kept beside the rules because the two must agree on what "progress" means:
+    the stall timer only resets when the aircraft has closed on the target by at
+    least `min_closure_m` (config: timing.no_progress_min_closure_m), so GPS
+    jitter cannot masquerade as progress.
     """
     distance = telemetry.distance_to(state.target)
     if distance is None:
         return
-    if state.best_distance_m is None or distance < state.best_distance_m - _CLOSURE_EPSILON:
+    if state.best_distance_m is None or distance < state.best_distance_m - min_closure_m:
         state.best_distance_m = distance
         state.best_distance_at = now
     elif state.best_distance_at is None:
         state.best_distance_at = now
-
-
-_CLOSURE_EPSILON = 1.0

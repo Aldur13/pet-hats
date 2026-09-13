@@ -24,24 +24,24 @@ def config() -> SafetyConfig:
 
 
 def make_telemetry(timestamp: float = 100.0, **overrides) -> Telemetry:
-    base = dict(
-        timestamp=timestamp,
-        position=HOME,
-        altitude_rel_m=100.0,
-        altitude_amsl_m=120.0,
-        velocity_ned_ms=(10.0, 0.0, 0.0),
-        battery_remaining=0.9,
-        battery_voltage_v=12.4,
-        satellites=16,
-        hdop=0.8,
-        has_fix=True,
-        accel_magnitude_g=1.0,
-        attitude_deg=(2.0, 3.0, 90.0),
-        wind_speed_ms=3.0,
-        armed=True,
-        in_air=True,
-        link_ok=True,
-    )
+    base = {
+        "timestamp": timestamp,
+        "position": HOME,
+        "altitude_rel_m": 100.0,
+        "altitude_amsl_m": 120.0,
+        "velocity_ned_ms": (10.0, 0.0, 0.0),
+        "battery_remaining": 0.9,
+        "battery_voltage_v": 12.4,
+        "satellites": 16,
+        "hdop": 0.8,
+        "has_fix": True,
+        "accel_magnitude_g": 1.0,
+        "attitude_deg": (2.0, 3.0, 90.0),
+        "wind_speed_ms": 3.0,
+        "armed": True,
+        "in_air": True,
+        "link_ok": True,
+    }
     base.update(overrides)
     return Telemetry(**base)
 
@@ -99,7 +99,7 @@ def sustained_history(
     """History where every frame in the window carries `overrides`."""
     # The last frame must land exactly on `end`, otherwise TelemetryBuffer.sustained
     # sees a window shorter than requested and (correctly) refuses to confirm it.
-    count = max(2, int(round(duration / step)) + 1)
+    count = max(2, round(duration / step) + 1)
     frames = [
         make_telemetry(round(end - (count - 1 - i) * step, 6), **overrides)
         for i in range(count)

@@ -170,7 +170,7 @@ class SafetyConfig:
     # Loading
     # ------------------------------------------------------------------
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "SafetyConfig":
+    def from_dict(cls, data: dict[str, Any] | None) -> SafetyConfig:
         data = data or {}
         if not isinstance(data, dict):
             raise ConfigError(f"configuration must be a mapping, got {type(data).__name__}")
@@ -195,7 +195,7 @@ class SafetyConfig:
         return config
 
     @classmethod
-    def load(cls, path: str | Path) -> "SafetyConfig":
+    def load(cls, path: str | Path) -> SafetyConfig:
         path = Path(path)
         if not path.exists():
             raise ConfigError(f"config file not found: {path}")

@@ -16,6 +16,7 @@ from dronegoto.config import SafetyConfig
 from dronegoto.geo import GeoPoint, haversine_m, project
 from dronegoto.mission import MissionController, MissionOutcome
 from dronegoto.preview import plan_mission
+from dronegoto.safety import Severity
 
 HOME = GeoPoint(51.5074, -0.1278)
 
@@ -55,7 +56,7 @@ def triggered(result, rule: str) -> bool:
 # ---------------------------------------------------------------------------
 
 async def test_nominal_flight_completes():
-    result, backend, _ = await fly()
+    result, _, _ = await fly()
     assert result.outcome is MissionOutcome.COMPLETED
     assert result.reached_target
     assert result.triggers == ()
@@ -263,7 +264,12 @@ async def test_rising_terrain_is_caught_in_flight():
 # ---------------------------------------------------------------------------
 
 async def test_hover_timeout_sends_it_home():
-    config = SafetyConfig.from_dict({"timing": {"max_hover_time_s": 20.0}})
+    """The planner now refuses a hover longer than the budget, so bypass it to
+    prove the in-flight rule is enforced independently of the planner."""
+    config = SafetyConfig.from_dict({
+        "timing": {"max_hover_time_s": 20.0},
+        "behaviour": {"require_preflight_pass": False},
+    })
     result, _, _ = await fly(config=config, distance_m=600.0, hover_s=600.0)
     assert triggered(result, "hover_timeout")
     assert result.safe
@@ -347,3 +353,106 @@ async def test_chaos_always_ends_in_a_safe_state(seed):
         )
     else:
         assert backend.altitude_rel_m <= 0.6, "ended the scenario still in the air"
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+async def test_nothing_progresses_while_holding():
+    """A HOLD must actually hold. Before the fix, a hold during takeoff still
+    let the controller issue the outbound goto."""
+    from dronegoto.safety import SafetyEngine, Trigger, rule_mission_timeout
+
+    config = SafetyConfig.from_dict({
+        "timing": {"max_flight_time_s": 400.0, "max_hover_time_s": 30.0},
+    })
+    target = project(HOME, 45.0, 800.0)
+    backend = SimBackend(HOME, config)
+    await backend.connect()
+    telemetry = await backend.read_telemetry()
+    plan = plan_mission(HOME, target, config, hover_s=10.0,
+                        battery_available=telemetry.battery_remaining)
+    controller = MissionController(backend, config)
+
+    def hold_until_40s(ctx):
+        if ctx.now < 40.0:
+            return Trigger("synthetic_hold", Severity.HOLD, "holding")
+        return None
+
+    controller.engine = SafetyEngine(config, rules=[hold_until_40s, rule_mission_timeout])
+    await controller.run(plan)
+
+    gotos = [t for t, c in backend.command_log if c.startswith("goto")]
+    assert gotos, "the mission should have resumed once the hold cleared"
+    assert min(gotos) >= 40.0, f"goto was issued during the hold at t={min(gotos)}"
+
+
+async def test_terrain_hold_actually_climbs():
+    """Holding over rising ground fixes nothing; the aircraft has to get higher."""
+    from dronegoto.config import TerrainConfig
+    from dronegoto.elevation import profile_route
+
+    target = project(HOME, 45.0, 1500.0)
+
+    class FlatSurvey:
+        def lookup(self, points):
+            return [0.0] * len(points)
+
+    survey = profile_route(HOME, target, TerrainConfig(samples=9), source=FlatSurvey())
+    config = SafetyConfig.from_dict({})
+    backend = SimBackend(HOME, config, faults=[Fault("terrain_rise", at_s=0.0, magnitude=40.0)])
+    await backend.connect()
+    telemetry = await backend.read_telemetry()
+    plan = plan_mission(HOME, target, config, hover_s=20.0, terrain=survey,
+                        battery_available=telemetry.battery_remaining)
+
+    class TrueTerrain:
+        points, elevations = survey.points, survey.elevations
+        max_elevation_m = 60.0
+        home_elevation_m = 0.0
+
+        def elevation_at(self, point):
+            return 40.0 * (haversine_m(HOME, point) / 1000.0)
+
+    controller = MissionController(backend, config)
+    result = await controller.run(plan, terrain=TrueTerrain())
+
+    climbs = [c for _, c in backend.command_log if c.startswith("goto") and "@" in c]
+    altitudes = [float(c.split("@")[1].rstrip("m")) for c in climbs]
+    assert len(altitudes) >= 2 and max(altitudes) > altitudes[0], (
+        f"expected a climb re-command, got {climbs}"
+    )
+    assert max(altitudes) <= config.altitude.max_altitude_m
+    assert result.outcome is MissionOutcome.COMPLETED, result.reason
+    assert result.reached_target
+
+
+async def test_terrain_above_the_ceiling_returns_instead_of_climbing():
+    from dronegoto.safety import rule_terrain_clearance
+    from tests.conftest import make_context, make_state
+
+    config = SafetyConfig.from_dict({})
+    # Ground at 150 m AMSL, home at 0: clearing it needs 190 m, ceiling is 120.
+    context = make_context(
+        config, altitude_amsl_m=160.0,
+        state=make_state(ground_elevation_here_m=150.0, home_elevation_m=0.0),
+    )
+    trigger = rule_terrain_clearance(context)
+    assert trigger is not None
+    assert trigger.severity is Severity.RETURN
+    assert trigger.detail["needed_rel_m"] == pytest.approx(190.0)
+
+
+def test_no_progress_closure_setting_is_honoured():
+    """timing.no_progress_min_closure_m used to be a setting with no effect."""
+    from dronegoto.safety import MissionState, update_progress
+    from dronegoto.telemetry import Telemetry
+
+    target = project(HOME, 0.0, 1000.0)
+    state = MissionState(home=HOME, target=target, best_distance_m=1000.0, best_distance_at=10.0)
+    closer_by_3m = Telemetry(timestamp=20.0, position=project(HOME, 0.0, 3.0))
+    update_progress(state, closer_by_3m, now=20.0, min_closure_m=5.0)
+    assert state.best_distance_at == 10.0, "3 m of jitter is not progress against a 5 m bar"
+    update_progress(state, closer_by_3m, now=20.0, min_closure_m=1.0)
+    assert state.best_distance_at == 20.0

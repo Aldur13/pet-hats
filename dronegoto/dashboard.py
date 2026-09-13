@@ -130,7 +130,7 @@ class Dashboard:
         self._lines_drawn = 0
 
 
-def _fmt(value: float | int | None, unit: str, width: int) -> str:
+def _fmt(value: float | None, unit: str, width: int) -> str:
     if value is None:
         return f"{'--' + unit:>{width}}"
     text = f"{value:.1f}{unit}" if isinstance(value, float) else f"{value}{unit}"

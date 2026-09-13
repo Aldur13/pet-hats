@@ -16,9 +16,10 @@ import json
 import logging
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from .config import TerrainConfig
 from .geo import GeoPoint, haversine_m, interpolate

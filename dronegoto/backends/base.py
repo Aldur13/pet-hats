@@ -102,4 +102,4 @@ class DroneBackend(ABC):
 
     async def step(self, dt: float) -> None:
         """Advance simulated time. Real aircraft ignore this."""
-        return None
+        return

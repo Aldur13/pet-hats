@@ -9,7 +9,7 @@ from dronegoto.config import SafetyConfig, TerrainConfig
 from dronegoto.elevation import FlatTerrain, TerrainProfile, profile_route
 from dronegoto.geo import GeoPoint, project
 from dronegoto.preview import plan_mission
-from dronegoto.safety import Severity, Trigger, SafetyVerdict
+from dronegoto.safety import SafetyVerdict, Severity, Trigger
 from dronegoto.telemetry import Telemetry
 
 HOME = GeoPoint(51.5074, -0.1278)
@@ -229,3 +229,13 @@ def test_summarise_reports_commands_and_decisions(tmp_path):
     assert "lowest battery ... 40%" in text
     assert "battery_low" in text
     assert "duration ......... 60.0s" in text
+
+
+def test_hover_longer_than_the_budget_is_blocked_at_planning():
+    """Previously such a mission flew and was then reported as RETURNED by the
+    hover timeout, which is the wrong place to discover a planning error."""
+    config = SafetyConfig.from_dict({})
+    plan = plan_mission(HOME, project(HOME, 45.0, 800.0), config, hover_s=900.0,
+                        battery_available=0.95)
+    assert not plan.go
+    assert any("hover" in b and "exceeds" in b for b in plan.blockers)
