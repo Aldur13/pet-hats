@@ -8,7 +8,7 @@ reports them as blockers rather than discovering them mid-air.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .config import SafetyConfig
 from .elevation import TerrainProfile

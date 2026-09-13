@@ -9,7 +9,7 @@ be accidentally bypassed by a new flight phase.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Awaitable, Callable
 
@@ -155,7 +155,6 @@ class MissionController:
     async def preflight(self, plan: MissionPlan) -> PreflightReport:
         checks: list[Check] = []
         telemetry = await self.backend.read_telemetry()
-        capabilities = self.backend.capabilities
 
         age = telemetry.age_s(self.backend.now())
         checks.append(
@@ -484,8 +483,8 @@ class MissionController:
 
     def _reason(self) -> str:
         primary = max(
-            self.engine._latched_triggers, key=lambda t: t.severity, default=None
-        ) if self.engine._latched_triggers else None
+            self.engine.latched_triggers, key=lambda t: t.severity, default=None
+        )
         if primary is not None and self._interrupted:
             return primary.reason
         if self._reached_target:
@@ -504,7 +503,7 @@ class MissionController:
             outcome=outcome,
             reason=reason,
             preflight=report,
-            triggers=tuple(self.engine._latched_triggers),
+            triggers=self.engine.latched_triggers,
             duration_s=self.state.elapsed(self.backend.now()),
             reached_target=self._reached_target,
             final_position=telemetry.position,

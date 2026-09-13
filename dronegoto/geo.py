@@ -10,7 +10,6 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Iterator
 
 # IUGG mean Earth radius. Using the mean (not equatorial) keeps haversine error
 # under ~0.5% at any latitude, which is well inside our safety margins.

@@ -64,6 +64,10 @@ class AltitudeConfig:
     min_altitude_m: float = 10.0
     rth_altitude_m: float = 80.0
     terrain_clearance_m: float = 40.0
+    # Real altitude hold wobbles by a metre or two, and the cruise phase begins
+    # just below the commanded altitude. Without a tolerance band the clearance
+    # rule chatters at exactly the threshold instead of reporting a real problem.
+    clearance_tolerance_m: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -260,6 +264,14 @@ class SafetyConfig:
             )
         if a.terrain_clearance_m < 0:
             errors.append("altitude.terrain_clearance_m must be non-negative")
+        if a.clearance_tolerance_m < 0:
+            errors.append("altitude.clearance_tolerance_m must be non-negative")
+        if a.clearance_tolerance_m >= a.terrain_clearance_m:
+            errors.append(
+                f"altitude.clearance_tolerance_m ({a.clearance_tolerance_m}) must be "
+                f"smaller than terrain_clearance_m ({a.terrain_clearance_m}), or the "
+                f"clearance rule could never fire"
+            )
         if a.terrain_clearance_m >= a.max_altitude_m:
             errors.append(
                 f"altitude.terrain_clearance_m ({a.terrain_clearance_m}) is not below "

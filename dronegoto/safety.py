@@ -23,7 +23,7 @@ from enum import IntEnum, StrEnum
 from typing import Callable, Iterable
 
 from .config import SafetyConfig
-from .geo import GeoPoint, bearing_deg, haversine_m, project
+from .geo import GeoPoint, haversine_m, project
 from .telemetry import Telemetry, TelemetryBuffer
 
 
@@ -340,6 +340,11 @@ def rule_freefall(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_uncommanded_descent(ctx: SafetyContext) -> Trigger | None:
+    """Losing height while cruising or hovering, when nothing asked it to.
+
+    Catches a sagging aircraft before it becomes a landing: an overloaded
+    airframe, a failing motor, or a downdraught the controller is not winning.
+    """
     if ctx.state.phase not in (MissionPhase.CRUISE, MissionPhase.HOVER):
         return None
     climb = ctx.telemetry.climb_rate_ms
@@ -422,6 +427,11 @@ def rule_geofence(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_altitude_ceiling(ctx: SafetyContext) -> Trigger | None:
+    """Climbing above the configured ceiling, usually the local legal limit.
+
+    Two bands: just over is a hold-and-descend, well over means something is
+    wrong with altitude control and the mission ends.
+    """
     cfg = ctx.config.altitude
     altitude = ctx.telemetry.altitude_rel_m
     if altitude is None or not ctx.airborne:
@@ -461,7 +471,7 @@ def rule_terrain_clearance(ctx: SafetyContext) -> Trigger | None:
         return None
 
     clearance = altitude_amsl - ground
-    if clearance < cfg.terrain_clearance_m:
+    if clearance < cfg.terrain_clearance_m - cfg.clearance_tolerance_m:
         needed_amsl = ground + cfg.terrain_clearance_m
         severity = Severity.HOLD
         note = "climbing"
@@ -483,6 +493,7 @@ def rule_terrain_clearance(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_position_unknown(ctx: SafetyContext) -> Trigger | None:
+    """No position fix at all. Landing here beats flying blind toward a guess."""
     if not ctx.airborne:
         return None
     if ctx.telemetry.position is None:
@@ -497,6 +508,7 @@ def rule_position_unknown(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_gps_quality(ctx: SafetyContext) -> Trigger | None:
+    """Degraded or lost satellite fix, escalating with how long it persists."""
     cfg = ctx.config.gps
     if not ctx.airborne:
         return None
@@ -564,6 +576,8 @@ def rule_telemetry_stale(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_link_loss(ctx: SafetyContext) -> Trigger | None:
+    """Control link gone. The response is policy, not physics, so it is configurable:
+    an onboard-executed mission may legitimately continue without us."""
     cfg = ctx.config.link
     if not ctx.airborne or ctx.telemetry.link_ok is not False:
         return None
@@ -617,6 +631,7 @@ def rule_no_progress(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_mission_timeout(ctx: SafetyContext) -> Trigger | None:
+    """Airborne longer than the flight-time budget allows."""
     cfg = ctx.config.timing
     if not ctx.airborne or ctx.state.started_at is None:
         return None
@@ -642,6 +657,7 @@ def rule_mission_timeout(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_hover_timeout(ctx: SafetyContext) -> Trigger | None:
+    """Loitering at the destination past the hover budget."""
     cfg = ctx.config.timing
     if ctx.state.phase != MissionPhase.HOVER or ctx.state.hover_started_at is None:
         return None
@@ -659,6 +675,7 @@ def rule_hover_timeout(ctx: SafetyContext) -> Trigger | None:
 
 @rule
 def rule_wind(ctx: SafetyContext) -> Trigger | None:
+    """Wind at or above the airframe's limit - come home while it still can."""
     if not ctx.airborne:
         return None
     wind = ctx.telemetry.wind_speed_ms
@@ -695,6 +712,11 @@ class SafetyEngine:
     @property
     def latched_severity(self) -> Severity:
         return self._latched
+
+    @property
+    def latched_triggers(self) -> tuple[Trigger, ...]:
+        """The triggers that caused the current latch, for reporting."""
+        return tuple(self._latched_triggers)
 
     def reset(self) -> None:
         self._latched = Severity.NONE
@@ -748,11 +770,18 @@ class SafetyEngine:
 
 
 def _merge_triggers(existing: list[Trigger], new: list[Trigger]) -> list[Trigger]:
-    """Union by rule name, keeping the most severe instance of each."""
+    """Union by rule name, keeping the most severe instance of each.
+
+    Ties go to the newer instance so a still-firing rule reports current numbers
+    rather than the reading it first fired on - otherwise a latched trigger keeps
+    quoting a battery percentage from minutes ago. A rule that has stopped firing
+    keeps its original text, which is the correct historical record of why the
+    mission was abandoned.
+    """
     merged: dict[str, Trigger] = {t.rule: t for t in existing}
     for t in new:
         current = merged.get(t.rule)
-        if current is None or t.severity > current.severity:
+        if current is None or t.severity >= current.severity:
             merged[t.rule] = t
     return list(merged.values())
 

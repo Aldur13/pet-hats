@@ -16,7 +16,6 @@ from dronegoto.config import SafetyConfig
 from dronegoto.geo import GeoPoint, haversine_m, project
 from dronegoto.mission import MissionController, MissionOutcome
 from dronegoto.preview import plan_mission
-from dronegoto.safety import Severity
 
 HOME = GeoPoint(51.5074, -0.1278)
 

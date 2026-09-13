@@ -12,15 +12,12 @@ import random
 import pytest
 
 from dronegoto.config import SafetyConfig
-from dronegoto.geo import project
 from dronegoto.safety import (
-    MissionPhase,
     SafetyEngine,
-    SafetyVerdict,
     Severity,
     Trigger,
 )
-from tests.conftest import HOME, make_context, make_state, make_telemetry, sustained_history
+from tests.conftest import make_context, sustained_history
 
 
 def const_rule(name: str, severity: Severity):
@@ -183,3 +180,25 @@ def test_verdict_reasons_are_ordered_most_severe_first(config):
     rules = [const_rule("mild", Severity.WARN), const_rule("severe", Severity.LAND)]
     verdict = SafetyEngine(config, rules=rules).evaluate(make_context(config))
     assert "severe" in verdict.reasons()[0]
+
+
+def test_a_still_firing_latched_trigger_reports_current_numbers(config):
+    """A latched RETURN that keeps quoting the battery level it first fired on
+    would mislead anyone watching the live display."""
+    engine = SafetyEngine(config)
+    first = engine.evaluate(make_context(config, battery_remaining=0.39))
+    assert "39%" in first.primary.reason
+
+    later = engine.evaluate(make_context(config, battery_remaining=0.31))
+    battery = next(t for t in later.triggers if t.rule == "battery_low")
+    assert "31%" in battery.reason, "latched trigger should refresh while still firing"
+
+
+def test_a_trigger_that_stops_firing_keeps_its_original_account(config):
+    """The reason the mission was abandoned does not change retroactively."""
+    engine = SafetyEngine(config, rules=[const_rule("gust", Severity.RETURN)])
+    engine.evaluate(make_context(config))
+    engine.rules = [silent_rule]
+    verdict = engine.evaluate(make_context(config))
+    assert verdict.severity is Severity.RETURN
+    assert any(t.rule == "gust" for t in verdict.triggers)

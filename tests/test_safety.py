@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from dronegoto.config import SafetyConfig
-from dronegoto.geo import GeoPoint, project
+from dronegoto.geo import project
 from dronegoto.safety import (
     RULES,
     MissionPhase,
@@ -463,3 +463,25 @@ def test_hover_timeout(config):
 def test_wind_limit(ctx):
     assert rule_wind(ctx(wind_speed_ms=12.0)).severity is Severity.RETURN
     assert rule_wind(ctx(wind_speed_ms=4.0)) is None
+
+
+def test_terrain_clearance_does_not_chatter_at_the_threshold(config):
+    """Sitting exactly on the minimum, or a metre under it, is altitude-hold
+    wobble - not a terrain problem. Without the tolerance band this fired every
+    time the aircraft entered cruise just below its commanded altitude."""
+    for clearance in (40.0, 39.5, 38.5):
+        context = make_context(
+            config,
+            altitude_amsl_m=30.0 + clearance,
+            state=make_state(ground_elevation_here_m=30.0, max_ground_elevation_m=30.0),
+        )
+        assert rule_terrain_clearance(context) is None, f"chattered at {clearance} m"
+
+
+def test_terrain_clearance_still_fires_once_genuinely_low(config):
+    context = make_context(
+        config,
+        altitude_amsl_m=67.0,  # 37 m over 30 m ground: past the tolerance band
+        state=make_state(ground_elevation_here_m=30.0, max_ground_elevation_m=30.0),
+    )
+    assert rule_terrain_clearance(context) is not None

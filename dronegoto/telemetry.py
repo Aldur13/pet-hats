@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from dataclasses import dataclass, field, replace
-from typing import Deque, Iterable, Sequence
+from typing import Deque, Iterable
 
 from .geo import GeoPoint, haversine_m
 

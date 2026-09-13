@@ -28,6 +28,8 @@ altitude:
   min_altitude_m: 10.0
   rth_altitude_m: 80.0       # climb to this before returning, to clear obstacles
   terrain_clearance_m: 40.0  # minimum height above ground along the route
+  clearance_tolerance_m: 2.0 # slack for altitude-hold wobble, so the rule
+                             # reports real problems rather than chattering
 
 impact:
   enabled: true
