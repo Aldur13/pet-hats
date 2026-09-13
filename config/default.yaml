@@ -75,6 +75,13 @@ terrain:
   cache_path: ".cache/elevation.json"
   required: false            # true = refuse to fly if elevation data is unavailable
 
+tricks:
+  enabled: true
+  min_altitude_m: 15.0        # a flip needs room to complete and recover
+  min_battery_pct: 0.50       # flips draw a large instantaneous current spike
+  max_attitude_deviation_deg: 20.0  # must start roughly level, not mid-maneuver
+  require_gps_fix: true
+
 behaviour:
   latch_failsafes: true      # once a return is triggered it does not un-trigger
   allow_terminate: false     # motor cutoff; only enable if you understand it

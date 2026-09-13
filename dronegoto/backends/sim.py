@@ -110,6 +110,8 @@ class SimBackend(DroneBackend):
         self._velocity_ned = (0.0, 0.0, 0.0)
         self._frozen_frame: Telemetry | None = None
         self.command_log: list[tuple[float, str]] = []
+        self._flip_until: float | None = None
+        self._flip_duration_s = 1.0
 
     # ------------------------------------------------------------------
     # DroneBackend
@@ -122,6 +124,7 @@ class SimBackend(DroneBackend):
             supports_failsafe_params=True,
             supports_terminate=True,
             supports_onboard_mission=True,
+            supports_flip=True,
         )
 
     def now(self) -> float:
@@ -175,6 +178,18 @@ class SimBackend(DroneBackend):
         self.mode = SimMode.TERMINATED
         self.armed = False
         self._log("terminate")
+
+    async def flip(self) -> None:
+        """Simulate ArduPilot's FLIP mode: a brief, large attitude excursion
+        that self-recovers, standing in for "one flip, then back to whatever
+        mode you were in". Physically approximate on purpose - this exists so
+        `dronegoto.tricks.flip()`'s *gating* is testable, not to model the
+        actual roll dynamics of a flip.
+        """
+        if not self.armed or self.altitude_rel_m < 0.5:
+            raise BackendError("cannot flip while disarmed or on the ground")
+        self._flip_until = self._t + self._flip_duration_s
+        self._log("flip")
 
     async def upload_geofence(self, home: GeoPoint, radius_m: float, max_altitude_m: float) -> None:
         self._log(f"geofence r={radius_m:.0f}m alt={max_altitude_m:.0f}m")
@@ -292,7 +307,14 @@ class SimBackend(DroneBackend):
             accel = 0.0
 
         upset = self._fault_magnitude("attitude_upset", default=0.0)
-        attitude = (upset, 0.0, 0.0) if upset else (1.5, 2.0, 0.0)
+        if self._flip_until is not None and self._t < self._flip_until:
+            attitude = (170.0, 0.0, 0.0)  # mid-roll
+        elif upset:
+            attitude = (upset, 0.0, 0.0)
+        else:
+            if self._flip_until is not None:
+                self._flip_until = None
+            attitude = (1.5, 2.0, 0.0)
 
         frame = Telemetry(
             timestamp=self._t,

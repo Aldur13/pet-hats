@@ -182,3 +182,46 @@ def test_terrain_rise_scenario_actually_climbs(tmp_path, capsys):
         r["kind"] == "verdict" and any(t["rule"] == "terrain_clearance" for t in r["triggers"])
         for r in records
     )
+
+
+# ---------------------------------------------------------------------------
+# flip
+# ---------------------------------------------------------------------------
+
+def test_flip_refuses_on_the_ground_by_default(capsys):
+    code, out = run(["flip", "--backend", "sim"], capsys)
+    assert code == EXIT_REFUSED
+    assert "FAIL" in out.out
+    assert "armed and airborne" in out.out
+
+
+def test_flip_succeeds_when_airborne(capsys):
+    code, out = run(["flip", "--backend", "sim", "--airborne"], capsys)
+    assert code == EXIT_OK
+    assert "flip commanded" in out.out
+
+
+def test_flip_refuses_on_low_battery_even_when_airborne(capsys):
+    code, out = run(
+        ["flip", "--backend", "sim", "--airborne", "--battery", "0.2"], capsys
+    )
+    assert code == EXIT_REFUSED
+    assert "battery" in out.out
+    assert "flip commanded" not in out.out
+
+
+def test_flip_writes_a_black_box_record_when_asked(tmp_path, capsys):
+    log = tmp_path / "flip.jsonl"
+    run(["flip", "--backend", "sim", "--airborne", "--log", str(log)], capsys)
+    assert log.exists()
+    records = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
+    assert any(r["kind"] == "flip" for r in records)
+
+
+def test_real_flip_is_refused_without_a_human_or_explicit_yes(monkeypatch, capsys):
+    """Same posture as `fly`: never command a real aircraft unattended."""
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
+    code, out = run(["flip", "--backend", "mavsdk"], capsys)
+    assert code == EXIT_REFUSED
+    assert "without --yes" in out.err
+    assert "nothing was commanded" in out.err

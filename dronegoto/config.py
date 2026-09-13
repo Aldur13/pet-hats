@@ -143,6 +143,26 @@ class TerrainConfig:
 
 
 @dataclass(frozen=True)
+class TricksConfig:
+    """Gates for a software-triggered aerobatic maneuver (e.g. ArduPilot FLIP).
+
+    A flip is a deliberate, large, brief attitude excursion - exactly what
+    `impact.max_attitude_deg` exists to catch as a collision signal elsewhere in
+    this system. These checks run *before* the maneuver is requested, so the
+    aircraft never asks for one it cannot recover from cleanly: enough altitude
+    to complete it and still clear the ground, enough charge for a max-current
+    maneuver, and starting from level, controlled flight rather than out of an
+    unrelated upset.
+    """
+
+    enabled: bool = True
+    min_altitude_m: float = 15.0
+    min_battery_pct: float = 0.50
+    max_attitude_deviation_deg: float = 20.0
+    require_gps_fix: bool = True
+
+
+@dataclass(frozen=True)
 class BehaviourConfig:
     """Policy knobs that are not thresholds."""
 
@@ -164,6 +184,7 @@ class SafetyConfig:
     timing: TimingConfig = TimingConfig()
     flight: FlightConfig = FlightConfig()
     terrain: TerrainConfig = TerrainConfig()
+    tricks: TricksConfig = TricksConfig()
     behaviour: BehaviourConfig = BehaviourConfig()
 
     # ------------------------------------------------------------------
@@ -360,6 +381,19 @@ class SafetyConfig:
 
         if self.terrain.samples < 2:
             errors.append("terrain.samples must be at least 2 (route endpoints)")
+
+        tr = self.tricks
+        if tr.min_altitude_m < 0:
+            errors.append("tricks.min_altitude_m must be non-negative")
+        if not 0.0 < tr.min_battery_pct <= 1.0:
+            errors.append("tricks.min_battery_pct must be a fraction in (0, 1]")
+        if not 0.0 < tr.max_attitude_deviation_deg < self.impact.max_attitude_deg:
+            errors.append(
+                f"tricks.max_attitude_deviation_deg ({tr.max_attitude_deviation_deg}) must be "
+                f"positive and below impact.max_attitude_deg ({self.impact.max_attitude_deg}); "
+                f"otherwise a maneuver could be permitted to start from an attitude the impact "
+                f"rule would itself already be treating as a collision"
+            )
 
         if errors:
             raise ConfigError(

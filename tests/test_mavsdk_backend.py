@@ -119,3 +119,74 @@ def test_ardupilot_map_never_disables_a_failsafe():
     for _, kind, value_of in ARDUPILOT_PARAMS.values():
         value = value_of(config)
         assert value != 0 or kind == "int", "no zero-valued float params (a 0 usually means disabled)"
+
+
+# ---------------------------------------------------------------------------
+# Flip / set_flight_mode
+# ---------------------------------------------------------------------------
+
+from dronegoto.backends.base import BackendError
+from dronegoto.backends.mavsdk_backend import ARDUCOPTER_MODE_FLIP
+
+
+def test_supports_flip_only_with_the_ardupilot_param_map():
+    px4 = MavsdkBackend(SafetyConfig.from_dict({}))  # default param_map is PX4_PARAMS
+    assert px4.capabilities.supports_flip is False
+
+    ardupilot = MavsdkBackend(SafetyConfig.from_dict({}), param_map=ARDUPILOT_PARAMS)
+    assert ardupilot.capabilities.supports_flip is True
+
+
+async def test_flip_refuses_on_px4():
+    """FLIP is an ArduCopter flight mode; PX4 has nothing to send it to."""
+    backend = MavsdkBackend(SafetyConfig.from_dict({}))  # PX4_PARAMS
+    with pytest.raises(BackendError, match="ArduCopter-only"):
+        await backend.flip()
+
+
+class FakePassthrough:
+    def __init__(self, raises: Exception | None = None) -> None:
+        self.calls: list[tuple] = []
+        self._raises = raises
+
+    def get_target_sysid(self) -> int:
+        return 1
+
+    def get_target_compid(self) -> int:
+        return 1
+
+    async def send_command_long(self, *args):
+        if self._raises is not None:
+            raise self._raises
+        self.calls.append(args)
+
+
+async def test_flip_sends_mav_cmd_do_set_mode_for_flight_mode_14():
+    backend = MavsdkBackend(SafetyConfig.from_dict({}), param_map=ARDUPILOT_PARAMS)
+    passthrough = FakePassthrough()
+    backend._drone = SimpleNamespace(mavlink_passthrough=passthrough)
+
+    await backend.flip()
+
+    assert len(passthrough.calls) == 1
+    _sysid, _compid, command, _confirmation, base_mode, custom_mode, *rest = passthrough.calls[0]
+    assert command == 176  # MAV_CMD_DO_SET_MODE
+    assert base_mode == 1  # MAV_MODE_FLAG_CUSTOM_MODE_ENABLED
+    assert custom_mode == float(ARDUCOPTER_MODE_FLIP)
+    assert rest == [0, 0, 0, 0, 0]
+
+
+async def test_set_flight_mode_raises_without_the_passthrough_plugin():
+    backend = MavsdkBackend(SafetyConfig.from_dict({}), param_map=ARDUPILOT_PARAMS)
+    backend._drone = SimpleNamespace()  # no mavlink_passthrough attribute
+    with pytest.raises(BackendError, match="mavlink_passthrough"):
+        await backend.set_flight_mode(ARDUCOPTER_MODE_FLIP)
+
+
+async def test_set_flight_mode_wraps_transport_failures():
+    backend = MavsdkBackend(SafetyConfig.from_dict({}), param_map=ARDUPILOT_PARAMS)
+    backend._drone = SimpleNamespace(
+        mavlink_passthrough=FakePassthrough(raises=RuntimeError("link down"))
+    )
+    with pytest.raises(BackendError, match="link down"):
+        await backend.set_flight_mode(ARDUCOPTER_MODE_FLIP)

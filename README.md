@@ -126,3 +126,14 @@ refuses to run non-interactively without `--yes`.
 Test in SITL first. Airspace, line of sight, altitude limits and Remote ID are
 yours to comply with — most jurisdictions require visual line of sight, and
 flying beyond it needs specific authorisation.
+
+## Fast, flip-capable builds
+
+Want manual flying, a software "click flip" button, and autonomous missions
+on one DIY aircraft? See [docs/BUILD_FASTQUAD.md](docs/BUILD_FASTQUAD.md) for
+the hardware (a 5" ArduCopter build, ~$400–450) and
+[docs/ACRO_TUNING.md](docs/ACRO_TUNING.md) for manual-flying setup. The click-flip
+trigger is `dronegoto flip` (see `dronegoto/tricks.py`), and
+`config/fastquad.yaml` retunes speed, geofence lookahead and battery priors for
+a fast airframe. This targets **ArduPilot**, not Betaflight — Betaflight has no
+autonomous-mission system to build on; see BUILD_FASTQUAD.md for that trade.

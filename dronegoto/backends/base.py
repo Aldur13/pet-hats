@@ -42,6 +42,7 @@ class BackendCapabilities:
     supports_failsafe_params: bool = False
     supports_terminate: bool = False
     supports_onboard_mission: bool = False
+    supports_flip: bool = False
 
 
 class DroneBackend(ABC):
@@ -99,6 +100,17 @@ class DroneBackend(ABC):
     async def write_failsafe_params(self, params: dict[str, float]) -> None:
         """Push failsafe parameters so the aircraft protects itself if we die."""
         raise BackendError(f"{self.capabilities.name} cannot store failsafe parameters")
+
+    async def flip(self) -> None:
+        """Perform one automatic flip and return to the prior flight mode.
+
+        Deliberately not a full flight-control feature: this hands off to the
+        autopilot's own flip implementation (ArduPilot's FLIP mode) rather than
+        commanding attitude ourselves. Callers must not call this directly -
+        `dronegoto.tricks.flip()` is the safety-gated entry point that checks
+        altitude and battery first, exactly as `mission.py` gates a launch.
+        """
+        raise BackendError(f"{self.capabilities.name} cannot perform a flip")
 
     async def step(self, dt: float) -> None:
         """Advance simulated time. Real aircraft ignore this."""

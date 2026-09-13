@@ -148,6 +148,16 @@ Defaults from `config/default.yaml`. Every one is a setting.
 | `no_progress_timeout_s` | `30.0` |
 | `tick_interval_s` | `0.2` |
 
+### `tricks`
+
+| Setting | Default |
+|---|---|
+| `enabled` | `True` |
+| `max_attitude_deviation_deg` | `20.0` |
+| `min_altitude_m` | `15.0` |
+| `min_battery_pct` | `0.5` |
+| `require_gps_fix` | `True` |
+
 ## Two design rules worth stating explicitly
 
 **Unknown telemetry is never nominal.** Every field the aircraft might fail

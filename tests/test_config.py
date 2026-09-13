@@ -115,3 +115,30 @@ def test_round_trips_through_yaml(tmp_path):
     path = tmp_path / "c.yaml"
     path.write_text(yaml.safe_dump(original.to_dict()))
     assert SafetyConfig.load(path).to_dict() == original.to_dict()
+
+
+def test_fastquad_profile_loads_and_validates():
+    """The shipped fast-airframe profile must itself pass the same validation
+    every user config does, and must genuinely differ from the defaults in the
+    dimensions BUILD_FASTQUAD.md claims (speed, geofence lookahead, impact
+    thresholds, battery priors, flight-time budget) while leaving everything
+    else - the fields it does not mention - at the default."""
+    default = SafetyConfig.from_dict({})
+    fast = SafetyConfig.load("config/fastquad.yaml")
+
+    assert fast.flight.cruise_speed_ms > default.flight.cruise_speed_ms
+    assert fast.flight.max_speed_ms > default.flight.max_speed_ms
+    assert fast.geofence.lookahead_s < default.geofence.lookahead_s
+    assert fast.geofence.soft_margin_m > default.geofence.soft_margin_m
+    assert fast.impact.accel_threshold_g > default.impact.accel_threshold_g
+    assert fast.impact.accel_instant_g > default.impact.accel_instant_g
+    assert fast.battery.hover_drain_pct_per_min > default.battery.hover_drain_pct_per_min
+    assert fast.battery.reserve_pct > default.battery.reserve_pct
+    assert fast.timing.max_flight_time_s < default.timing.max_flight_time_s
+
+    # Untouched sections/fields keep the default - e.g. the geofence radius and
+    # the battery percentage ladder are airframe-independent policy, not tied
+    # to how fast this particular aircraft flies.
+    assert fast.geofence.max_radius_m == default.geofence.max_radius_m
+    assert fast.battery.low_pct == default.battery.low_pct
+    assert fast.altitude.max_altitude_m == default.altitude.max_altitude_m

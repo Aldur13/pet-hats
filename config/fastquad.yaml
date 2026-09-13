@@ -1,0 +1,59 @@
+# dronegoto config profile for a fast 5" ArduCopter build (see docs/BUILD_FASTQUAD.md)
+#
+# Use with: dronegoto fly "<coord>" --config config/fastquad.yaml
+#
+# Only sections/fields that differ from config/default.yaml are listed here -
+# everything else (geofence radius, altitude ceiling, GPS/link timeouts, the
+# battery percentage ladder, ...) keeps the default and is validated the same
+# way. This profile governs the AUTONOMOUS legs this system flies for you; it
+# has no bearing on manual ACRO flying or the `dronegoto flip` trigger, which
+# ArduPilot itself controls (see docs/ACRO_TUNING.md) - there is no Python
+# safety supervisor watching while you are hand-flying with no mission active.
+
+flight:
+  # A 5" freestyle quad cruises far faster than the 12 m/s this project
+  # defaults to for a camera drone.
+  cruise_speed_ms: 25.0
+  max_speed_ms: 35.0
+  # A fast aircraft needs a larger acceptance radius or it overshoots the
+  # waypoint and oscillates trying to re-converge on it.
+  arrival_radius_m: 8.0
+
+geofence:
+  # Same physical look-ahead *distance* as the default profile
+  # (10s x 12 m/s = 120m), re-expressed in time at the new cruise speed
+  # (120m / 25 m/s = 4.8s) - at higher speed the same time window covers much
+  # more ground, so it has to shrink or the soft fence triggers far too early.
+  lookahead_s: 4.8
+  # More speed needs more physical distance to turn around in.
+  soft_margin_m: 800.0
+
+impact:
+  # A fast quad pulls real g in ordinary aggressive cornering during an
+  # autonomous leg, which the default thresholds (tuned for a slow, gentle
+  # camera drone) would misread as a collision. Raised with headroom above
+  # normal maneuvering load while still well below a genuine impact spike.
+  accel_threshold_g: 5.0
+  accel_instant_g: 9.0
+
+battery:
+  # A 6S racing pack is small and drains far faster per minute than a camera
+  # drone's pack; drain is time-driven more than distance-driven (see
+  # backends/sim.py), so cruise_drain_pct_per_km here is derived from the same
+  # per-minute figure rather than measured independently:
+  #   25 m/s x 60s = 1.5 km/min covered at 20%/min hover-equivalent drain
+  #   => 20 / 1.5 = 13.3 %/km
+  # MEASURE YOUR OWN PACK. These are starting priors for the adaptive
+  # estimator, not a substitute for a real discharge curve.
+  hover_drain_pct_per_min: 20.0
+  cruise_drain_pct_per_km: 13.3
+  # Racing packs sag hard under load near empty, making voltage-based capacity
+  # estimates less reliable right when the margin matters most.
+  reserve_pct: 0.20
+
+timing:
+  # A small high-drain pack cannot sustain 15 minutes of hard flying. These
+  # reflect realistic pack endurance under load, not the default's camera-drone
+  # assumption - measure your own pack and adjust.
+  max_flight_time_s: 240.0
+  max_hover_time_s: 45.0

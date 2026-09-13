@@ -9,6 +9,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from . import tricks
 from .backends.base import BackendError, DroneBackend
 from .backends.sim import Fault, SimBackend, SimConfig
 from .blackbox import BlackBox, summarise
@@ -231,6 +232,83 @@ async def _fly(args: argparse.Namespace) -> int:
     return EXIT_OK if result.safe else EXIT_UNSAFE
 
 
+def cmd_flip(args: argparse.Namespace) -> int:
+    return asyncio.run(_flip(args))
+
+
+async def _flip(args: argparse.Namespace) -> int:
+    """The "click flip" button: gate, then request, one automatic flip.
+
+    No mission runs here - this is meant to work while you are hand-flying.
+    See dronegoto/tricks.py for the scope note on combining this with an
+    active autonomous mission in the same process.
+    """
+    try:
+        config = _load_config(args.config)
+    except ConfigError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return EXIT_USAGE
+
+    backend: DroneBackend
+    if args.backend == "sim":
+        home = parse_coordinates(args.home) if args.home else GeoPoint(51.5074, -0.1278)
+        backend = SimBackend(
+            home, config, sim=SimConfig(start_battery=args.battery if args.battery is not None else 1.0)
+        )
+    else:
+        from .backends.mavsdk_backend import MavsdkBackend
+
+        if not _confirm_real_flip(args):
+            print("aborted - nothing was commanded.", file=sys.stderr)
+            return EXIT_REFUSED
+        backend = MavsdkBackend(config, system_address=args.address)
+
+    try:
+        await backend.connect()
+    except BackendError as exc:
+        print(f"could not connect: {exc}", file=sys.stderr)
+        return EXIT_REFUSED
+
+    if args.backend == "sim" and args.airborne:
+        # Convenience so the gate has something to evaluate without wiring up a
+        # full mission first: arm, climb to a test altitude, and level off.
+        target_alt = args.alt or 50.0
+        await backend.arm()
+        await backend.takeoff(target_alt)
+        max_ticks = int(target_alt / 1.0 / 0.2) + 100
+        for _ in range(max_ticks):
+            await backend.step(0.2)
+            if backend.altitude_rel_m >= target_alt - 0.5:
+                break
+
+    blackbox = BlackBox(args.log) if args.log else None
+    try:
+        report = await tricks.flip(backend, config, blackbox=blackbox)
+    finally:
+        if blackbox is not None:
+            blackbox.close()
+        await backend.close()
+
+    print(report.render())
+    return EXIT_OK if report.performed else EXIT_REFUSED
+
+
+def _confirm_real_flip(args: argparse.Namespace) -> bool:
+    """Require an explicit acknowledgement before commanding a flip on a real
+    aircraft. Unlike `fly`, the pilot is presumably already flying by hand -
+    the risk here is a bad maneuver on command, not an unattended aircraft."""
+    if args.yes:
+        return True
+    if not sys.stdin.isatty():
+        print("refusing to flip a real aircraft non-interactively without --yes",
+              file=sys.stderr)
+        return False
+    print("About to command a FLIP on a REAL aircraft.")
+    print("This only proceeds if the pre-flip checks pass (altitude, battery, "
+          "GPS fix, level attitude, wind).")
+    return input("Type 'flip' to confirm: ").strip().lower() == "flip"
+
+
 def _confirm_real_flight(args: argparse.Namespace, target: GeoPoint) -> bool:
     """Require an explicit acknowledgement before commanding a real aircraft.
 
@@ -304,6 +382,20 @@ def build_parser() -> argparse.ArgumentParser:
     fly.add_argument("--yes", action="store_true", help="skip the real-flight confirmation")
     add_common(fly)
     fly.set_defaults(func=cmd_fly)
+
+    flip = sub.add_parser("flip", help="the 'click flip' button - gate, then trigger, one flip")
+    flip.add_argument("--config", help="path to a YAML config (default: config/default.yaml)")
+    flip.add_argument("--backend", choices=("sim", "mavsdk"), default="sim")
+    flip.add_argument("--address", default="udp://:14540", help="MAVLink address")
+    flip.add_argument("--home", help="sim launch coordinate (default: a fixed test point)")
+    flip.add_argument("--alt", type=float, help="sim test altitude in metres (default 50)")
+    flip.add_argument("--battery", type=float, help="simulated starting battery, 0..1")
+    flip.add_argument("--airborne", action="store_true",
+                      help="sim only: arm and climb to --alt first, for trying the "
+                           "command without a running mission")
+    flip.add_argument("--log", help="black-box path to record the attempt (optional)")
+    flip.add_argument("--yes", action="store_true", help="skip the real-flip confirmation")
+    flip.set_defaults(func=cmd_flip)
 
     scenario = sub.add_parser("sim-scenario", help="fly a named failure scenario in the simulator")
     scenario.add_argument("name", help="scenario name, or 'list'")

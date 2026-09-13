@@ -52,6 +52,15 @@ PX4_PARAMS = {
 # percentages and ArduPilot's are volts or mAh, which depend on the pack. Writing
 # a guess - and in particular writing 0, which *disables* the voltage failsafe -
 # would be worse than leaving the pilot's own calibration in place.
+# ArduCopter custom flight mode numbers (APM:Copter mode list). Only the ones
+# this backend actually uses are named; the rest of ArduPilot's mode set is
+# out of scope here.
+ARDUCOPTER_MODE_FLIP = 14
+
+# MAV_MODE_FLAG_CUSTOM_MODE_ENABLED - required on base_mode for MAV_CMD_DO_SET_MODE
+# to select an ArduPilot custom mode rather than a standard MAVLink base mode.
+_MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1
+
 ARDUPILOT_PARAMS = {
     "rtl_altitude": ("RTL_ALT", "float", lambda cfg: cfg.altitude.rth_altitude_m * 100),
     "fence_radius": ("FENCE_RADIUS", "float", lambda cfg: cfg.geofence.max_radius_m),
@@ -145,6 +154,9 @@ class MavsdkBackend(DroneBackend):
             supports_failsafe_params=True,
             supports_terminate=True,
             supports_onboard_mission=True,
+            # FLIP is ArduCopter-specific; report it honestly rather than
+            # advertising a capability that would raise BackendError on PX4.
+            supports_flip=self.param_map is ARDUPILOT_PARAMS,
         )
 
     def now(self) -> float:
@@ -329,6 +341,50 @@ class MavsdkBackend(DroneBackend):
 
     async def terminate(self) -> None:
         await self._call(self._drone.action.terminate(), "terminate")
+
+    async def flip(self) -> None:
+        """Trigger ArduPilot's FLIP mode: one automatic flip, then the previous
+        flight mode is restored by the autopilot itself.
+
+        Not implemented for PX4 - this is an ArduCopter-specific flight mode
+        (`ArduCopter/mode_flip.cpp`), not a MAVLink standard. Callers should not
+        call this directly; `dronegoto.tricks.flip()` gates it on altitude and
+        battery first, the same way a mission is gated before arming.
+        """
+        if self.param_map is not ARDUPILOT_PARAMS:
+            raise BackendError(
+                "flip is an ArduCopter-only flight mode; this backend is configured "
+                "for a different autopilot (pass param_map=ARDUPILOT_PARAMS)"
+            )
+        await self.set_flight_mode(ARDUCOPTER_MODE_FLIP)
+
+    async def set_flight_mode(self, custom_mode: int) -> None:
+        """Send MAV_CMD_DO_SET_MODE for an ArduPilot custom flight mode.
+
+        MAVSDK's `action` plugin only exposes a handful of named, cross-vehicle
+        modes (arm, land, RTL...) - it has no call for an ArduPilot-specific mode
+        like FLIP. Reaching it means dropping to the raw MAVLink command via the
+        `mavlink_passthrough` plugin, which not every MAVSDK build exposes; that
+        absence is reported as a BackendError rather than silently doing nothing.
+        """
+        passthrough = getattr(self._drone, "mavlink_passthrough", None)
+        if passthrough is None:
+            raise BackendError(
+                "this MAVSDK build has no mavlink_passthrough plugin, so an "
+                "ArduPilot custom flight mode cannot be requested"
+            )
+        try:
+            await passthrough.send_command_long(
+                passthrough.get_target_sysid(),
+                passthrough.get_target_compid(),
+                176,  # MAV_CMD_DO_SET_MODE
+                0,
+                _MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
+                float(custom_mode),
+                0, 0, 0, 0, 0,
+            )
+        except Exception as exc:
+            raise BackendError(f"set flight mode {custom_mode} failed: {exc}") from exc
 
     # ------------------------------------------------------------------
     async def upload_geofence(
